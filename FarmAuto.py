@@ -530,7 +530,7 @@ def action_hunt_pests(stop_event: threading.Event, known_total: str | None = Non
 def Maps_waypoints(yaw: float, pitch: float, waypoint_list: list, stop_event: threading.Event) -> None:
     """
     Universally navigates connecting the dots from waypoint_list[1] to the end.
-    Calculates correct local movement keys using relative angle differences.
+    Calculates correct local movement keys using optimized relative angle differences.
     """
     minescript.player_inventory_select_slot(HOE_SLOT)
     minescript.player_press_attack(True)
@@ -560,29 +560,28 @@ def Maps_waypoints(yaw: float, pitch: float, waypoint_list: list, stop_event: th
                 dz = tz - pz
                 dist_2d = math.sqrt(dx**2 + dz**2)
                 
-                if dist_2d <= 0.3:  # Tolérance légèrement augmentée pour éviter les tremblements
+                if dist_2d <= 0.3:
                     break # Destination reached!
                 
-                # --- CALCUL DU MOUVEMENT RELATIF ---
-                # 1. Calcul de l'angle absolu vers la cible dans Minecraft (-180 à 180)
+                # --- NOUVEAU CALCUL D'ANGLE RELATIF OPTIMISÉ ---
+                # 1. On trouve l'angle absolu de la cible
                 target_angle = math.degrees(math.atan2(-dx, dz))
                 
-                # 2. Différence entre l'angle du joueur (yaw) et l'angle cible
+                # 2. On calcule la différence avec là où regarde le joueur
                 diff = (target_angle - yaw + 180) % 360 - 180
                 
-                # 3. Choix des touches basées sur la différence d'angle
-                # diff = 0 -> Devant | diff = 90 -> Droite | diff = -90 -> Gauche | diff = 180 -> Arrière
-                # On ajoute une tolérance de 45 degrés pour permettre les diagonales (2 touches à la fois)
-                
-                press_fwd = -80 < diff < 80
-                press_back = diff > 100 or diff < -100
-                press_left = -170 < diff < -10
-                press_right = 10 < diff < 170
+                # 3. Seuils asymétriques optimisés pour le farming :
+                # - Permet les diagonales Avant (W+D / W+A) pour attaquer 2 rangées.
+                # - Force un mouvement Arrière strict (S) sans dévier sur les côtés.
+                press_fwd = -85 < diff < 85
+                press_back = diff > 95 or diff < -95
+                press_right = 20 < diff < 145
+                press_left = -145 < diff < -20
                 
                 minescript.player_press_forward(press_fwd)
                 minescript.player_press_backward(press_back)
-                minescript.player_press_left(press_left)
                 minescript.player_press_right(press_right)
+                minescript.player_press_left(press_left)
                 
                 time.sleep(LOOP_SLEEP)
             
@@ -605,6 +604,7 @@ def Maps_waypoints(yaw: float, pitch: float, waypoint_list: list, stop_event: th
         release_all_keys()
         if not stop_event.is_set():
             warp_garden()
+            
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Generic farm loop
