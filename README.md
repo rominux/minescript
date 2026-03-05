@@ -36,7 +36,6 @@ To run FarmAuto, you must have the **Minescript** mod installed.
    * `setup.py` (The configuration wizard)
    * `config_lib.py` (Dependency: handles JSON saving)
    * `lib_screen.py` (Dependency: handles the GUI windows)
-   * `minescript_plus.py` (Dependency: advanced background keybinds and utilities - make sure you have v0.17.0+ if possible)
 
 ---
 
