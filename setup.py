@@ -5,6 +5,8 @@ Run this script from Minescript chat:  \\setup
 """
 
 import os
+import math
+import json
 import threading
 import time
 import minescript
@@ -12,10 +14,13 @@ from minescript import EventQueue, EventType
 from lib_screen import Screen
 from config_lib import Config
 
-# Fix du chemin de sauvegarde
 CONFIG_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "farmauto_config.json")
 
-CROPS = ["Wheat", "Carrot", "Potato", "Pumpkin", "Sugar_cane", "Melon", "Cactus", "Cocoa", "Mushroom_red", "Mushroom_brown", "Nether_wart", "Sunflower", "Wild_rose"]
+CROPS = [
+    "PestFarming", "Wheat", "Carrot", "Potato", "Pumpkin", "Sugar_cane", 
+    "Melon", "Cactus", "Cocoa", "Mushroom_red", "Mushroom_brown", 
+    "Nether_wart", "Sunflower", "Wild_rose"
+]
 
 KEY_F8  = 297
 KEY_F9  = 298
@@ -30,10 +35,76 @@ def _get_pos_and_angles() -> tuple:
     yaw, pitch = minescript.player_orientation()
     return (round(x, 3), round(y, 3), round(z, 3), round(yaw, 3), round(pitch, 3))
 
+# ─────────────────────────────────────────────────────────────────────────────
+# CUSTOM COMPACT JSON SAVER
+# ─────────────────────────────────────────────────────────────────────────────
+def save_compact_config(filepath: str, cfg: Config) -> None:
+    """ Sauvegarde le fichier JSON de manière très compactée et lisible """
+    data = {
+        "hoe_slot": cfg.get("hoe_slot", 2),
+        "vacuum_slot": cfg.get("vacuum_slot", 1),
+        "vacuum_radius": cfg.get("vacuum_radius", 14.0),
+        "auto_kill_on_path": cfg.get("auto_kill_on_path", True),
+        "auto_verify_tab": cfg.get("auto_verify_tab", True),
+        "farm_orientation": cfg.get("farm_orientation", "horizontal"),
+        "fishing_rod_slot": cfg.get("fishing_rod_slot", 4),
+        "pest_cooldown": cfg.get("pest_cooldown", 300),
+        "pest_plot_name": cfg.get("pest_plot_name", "3"),
+        "farms": cfg.get("farms", {})
+    }
+    
+    out = "{\n"
+    
+    # 1. Variables globales
+    top_keys = ["hoe_slot", "vacuum_slot", "vacuum_radius", "auto_kill_on_path", 
+                "auto_verify_tab", "farm_orientation", "fishing_rod_slot", 
+                "pest_cooldown", "pest_plot_name"]
+    for k in top_keys:
+        if k in data:
+            val = json.dumps(data[k])
+            out += f'  "{k}": {val},\n'
+            
+    # 2. Fermes et Waypoints compactés
+    out += '  "farms": {\n'
+    
+    farms = data.get("farms", {})
+    farm_keys = list(farms.keys())
+    for i, f_name in enumerate(farm_keys):
+        f_data = farms[f_name]
+        out += f'    "{f_name}": {{\n'
+        out += '      "waypoints": [\n'
+        
+        wps = f_data.get("waypoints", [])
+        for j, wp in enumerate(wps):
+            # Formate chaque dictionnaire sur une seule ligne (ex: {"type": "start", "x": 10, ...})
+            wp_str = json.dumps(wp, separators=(', ', ': '))
+            if j < len(wps) - 1:
+                out += f'        {wp_str},\n'
+            else:
+                out += f'        {wp_str}\n'
+                
+        out += '      ],\n'
+        out += f'      "yaw": {f_data.get("yaw", 0.0)},\n'
+        out += f'      "pitch": {f_data.get("pitch", 0.0)}\n'
+        
+        if i < len(farm_keys) - 1:
+            out += '    },\n'
+        else:
+            out += '    }\n'
+            
+    out += '  }\n}'
+    
+    # Écriture dans le fichier
+    with open(filepath, 'w', encoding='utf-8') as f:
+        f.write(out)
+
+# ─────────────────────────────────────────────────────────────────────────────
+# SETUP STEPS
+# ─────────────────────────────────────────────────────────────────────────────
 def step1_global_vars(cfg: Config) -> bool:
     result = {"confirmed": False}
-    scr = Screen("FarmAuto Setup - Step 1: Global Variables", width=420, height=340)
-    PAD, ROW, LW, IW, y = 14, 34, 170, 100, 14
+    scr = Screen("FarmAuto Setup - Step 1: Global Variables", width=420, height=430)
+    PAD, ROW, LW, IW, y = 14, 30, 180, 80, 14
 
     scr.add_label(text="Hoe Slot (0-8):", width=LW, height=22, x=PAD, y=y)
     inp_hoe = scr.text_input(text=str(cfg.get("hoe_slot", 2)), width=IW, height=22, x=PAD + LW + 6, y=y)
@@ -43,8 +114,20 @@ def step1_global_vars(cfg: Config) -> bool:
     inp_vac = scr.text_input(text=str(cfg.get("vacuum_slot", 1)), width=IW, height=22, x=PAD + LW + 6, y=y)
     y += ROW
 
+    scr.add_label(text="Fishing Rod Slot (0-8):", width=LW, height=22, x=PAD, y=y)
+    inp_rod = scr.text_input(text=str(cfg.get("fishing_rod_slot", 4)), width=IW, height=22, x=PAD + LW + 6, y=y)
+    y += ROW
+
+    scr.add_label(text="Pest Spawn Cooldown (sec):", width=LW, height=22, x=PAD, y=y)
+    inp_cd = scr.text_input(text=str(cfg.get("pest_cooldown", 300)), width=IW, height=22, x=PAD + LW + 6, y=y)
+    y += ROW
+
+    scr.add_label(text="Pest Base Plot Name:", width=LW, height=22, x=PAD, y=y)
+    inp_base = scr.text_input(text=str(cfg.get("pest_plot_name", "3")), width=IW, height=22, x=PAD + LW + 6, y=y)
+    y += ROW
+
     scr.add_label(text="Vacuum Radius (blocks):", width=LW, height=22, x=PAD, y=y)
-    inp_radius = scr.text_input(text=str(cfg.get("vacuum_radius", 6)), width=IW, height=22, x=PAD + LW + 6, y=y)
+    inp_radius = scr.text_input(text=str(cfg.get("vacuum_radius", 14.0)), width=IW, height=22, x=PAD + LW + 6, y=y)
     y += ROW
 
     cb_kill = scr.add_checkbox(text="Auto-Kill Pests on Path", width=260, height=24, x=PAD, y=y)
@@ -62,13 +145,17 @@ def step1_global_vars(cfg: Config) -> bool:
 
     def on_confirm():
         try:
-            hs, vs, vr = int(inp_hoe.value), int(inp_vac.value), float(inp_radius.value)
-            assert 1 <= hs <= 9 and 1 <= vs <= 9 and vr > 0
+            hs, vs, fr = int(inp_hoe.value), int(inp_vac.value), int(inp_rod.value)
+            vr, pc = float(inp_radius.value), int(inp_cd.value)
+            assert 1 <= hs <= 9 and 1 <= vs <= 9 and 1 <= fr <= 9 and vr > 0 and pc > 0
         except Exception:
-            scr.add_label(text="Error: slots must be 1-9; radius must be > 0", width=380, height=18, x=PAD, y=y + 30, fg="red")
+            scr.add_label(text="Error: slots must be 1-9; radius/cooldown > 0", width=380, height=18, x=PAD, y=y + 30, fg="red")
             return
         cfg.set("hoe_slot", hs)
         cfg.set("vacuum_slot", vs)
+        cfg.set("fishing_rod_slot", fr)
+        cfg.set("pest_cooldown", pc)
+        cfg.set("pest_plot_name", inp_base.value)
         cfg.set("vacuum_radius", vr)
         cfg.set("auto_kill_on_path", bool(cb_kill.value))
         cfg.set("auto_verify_tab", bool(cb_tab.value))
@@ -83,6 +170,8 @@ def step1_global_vars(cfg: Config) -> bool:
 def _recording_session(crop_name: str) -> dict | None:
     points: list[dict] = []
     msg(f"\n§b[Setup] Recording for §e{crop_name}§b.")
+    if crop_name == "PestFarming":
+        msg("§d[Info] For PestFarming, the bot will automatically loop End -> Start.")
     msg("§7  F8  → Start   |  F9  → Turn   |  F10 → End   |  F11 → Undo")
 
     done_event = threading.Event()
@@ -100,7 +189,7 @@ def _recording_session(crop_name: str) -> dict | None:
                         continue
                     px, py, pz, yaw, pitch = _get_pos_and_angles()
                     points.append({"type": "start", "x": px, "y": py, "z": pz, "yaw": yaw, "pitch": pitch})
-                    msg(f"§a[Setup] START recorded → ({px:.1f}, {py:.1f}, {pz:.1f})  yaw={yaw:.1f}° pitch={pitch:.1f}°")
+                    msg(f"§a[Setup] START recorded → ({px:.1f}, {py:.1f}, {pz:.1f})")
 
                 elif ev.key == KEY_F9:
                     if not any(p["type"] == "start" for p in points):
@@ -109,7 +198,7 @@ def _recording_session(crop_name: str) -> dict | None:
                     px, py, pz, yaw, pitch = _get_pos_and_angles()
                     idx = sum(1 for p in points if p["type"] == "turn") + 1
                     points.append({"type": "turn", "x": px, "y": py, "z": pz, "yaw": yaw, "pitch": pitch})
-                    msg(f"§e[Setup] TURN {idx} recorded → ({px:.1f}, {py:.1f}, {pz:.1f})  yaw={yaw:.1f}° pitch={pitch:.1f}°")
+                    msg(f"§e[Setup] TURN {idx} recorded → ({px:.1f}, {py:.1f}, {pz:.1f})")
 
                 elif ev.key == KEY_F10:
                     if not any(p["type"] == "start" for p in points):
@@ -117,13 +206,13 @@ def _recording_session(crop_name: str) -> dict | None:
                         continue
                     px, py, pz, yaw, pitch = _get_pos_and_angles()
                     points.append({"type": "end", "x": px, "y": py, "z": pz, "yaw": yaw, "pitch": pitch})
-                    msg(f"§c[Setup] END recorded → ({px:.1f}, {py:.1f}, {pz:.1f})  yaw={yaw:.1f}° pitch={pitch:.1f}°")
+                    msg(f"§c[Setup] END recorded → ({px:.1f}, {py:.1f}, {pz:.1f})")
                     done_event.set()
 
                 elif ev.key == KEY_F11:
                     if points:
                         removed = points.pop()
-                        msg(f"§d[Setup] Undone: {removed['type'].upper()} at ({removed['x']:.1f}, {removed['y']:.1f}, {removed['z']:.1f})")
+                        msg(f"§d[Setup] Undone: {removed['type'].upper()}")
                     else:
                         msg("§c[Setup] Nothing to undo.")
 
@@ -135,37 +224,40 @@ def _recording_session(crop_name: str) -> dict | None:
 
 def _choose_angle(points: list[dict]) -> tuple[float, float]:
     result = {"yaw": None, "pitch": None}
-    unique_pairs, seen = [], set()
-    for p in points:
-        key = (round(p["yaw"], 1), round(p["pitch"], 1))
-        if key not in seen:
-            seen.add(key)
-            unique_pairs.append(key)
+    
+    # Moyenne circulaire pour le Yaw
+    sum_sin = sum(math.sin(math.radians(p["yaw"])) for p in points)
+    sum_cos = sum(math.cos(math.radians(p["yaw"])) for p in points)
+    avg_yaw = math.degrees(math.atan2(sum_sin, sum_cos))
+    
+    # Moyenne classique pour le Pitch
+    avg_pitch = sum(p["pitch"] for p in points) / len(points)
+    
+    avg_yaw = round(avg_yaw, 1)
+    avg_pitch = round(avg_pitch, 1)
 
-    scr = Screen("FarmAuto Setup - Choose Locked Angle", width=420, height=300)
+    scr = Screen("FarmAuto Setup - Locked Angle", width=420, height=170)
     PAD, y = 14, 14
+    
     scr.add_label(text="Select the locked Yaw/Pitch for this farm:", width=390, height=22, x=PAD, y=y)
     y += 30
 
-    btn_y = y
-    for idx, (pair_yaw, pair_pitch) in enumerate(unique_pairs):
-        label_txt = f"[{idx+1}] Yaw={pair_yaw:.1f}°  Pitch={pair_pitch:.1f}°"
-        def make_cb(yw=pair_yaw, pt=pair_pitch):
-            def cb():
-                result["yaw"], result["pitch"] = yw, pt
-                scr.close()
-            return cb
-        scr.add_button(on_click=make_cb(), text=label_txt, width=360, height=26, x=PAD, y=btn_y)
-        btn_y += 34
+    def on_average():
+        result["yaw"], result["pitch"] = avg_yaw, avg_pitch
+        scr.close()
 
-    y = btn_y + 10
+    btn_text = f"Use Average  (Yaw: {avg_yaw}° | Pitch: {avg_pitch}°)"
+    scr.add_button(on_click=on_average, text=btn_text, width=392, height=28, x=PAD, y=y)
+    y += 36
+
     scr.add_label(text="- or enter custom values -", width=390, height=18, x=PAD, y=y, fg="#888888")
     y += 24
 
-    scr.add_label(text="Yaw:", width=50, height=22, x=PAD, y=y)
-    inp_yaw = scr.text_input(text="0.0", width=80, height=22, x=PAD + 54, y=y)
-    scr.add_label(text="Pitch:", width=50, height=22, x=PAD + 148, y=y)
-    inp_pitch = scr.text_input(text="0.0", width=80, height=22, x=PAD + 202, y=y)
+    scr.add_label(text="Yaw:", width=35, height=22, x=PAD, y=y)
+    inp_yaw = scr.text_input(text=str(avg_yaw), width=60, height=22, x=PAD + 35, y=y)
+    
+    scr.add_label(text="Pitch:", width=40, height=22, x=PAD + 110, y=y)
+    inp_pitch = scr.text_input(text=str(avg_pitch), width=60, height=22, x=PAD + 150, y=y)
 
     def on_custom():
         try:
@@ -173,8 +265,8 @@ def _choose_angle(points: list[dict]) -> tuple[float, float]:
             scr.close()
         except ValueError: pass
 
-    scr.add_button(on_click=on_custom, text="Use Custom", width=110, height=26, x=PAD + 295, y=y)
-    scr.height = y + 60
+    scr.add_button(on_click=on_custom, text="Use Custom", width=100, height=26, x=PAD + 230, y=y)
+    
     scr.show()
     return float(result["yaw"] if result["yaw"] is not None else 0.0), float(result["pitch"] if result["pitch"] is not None else 0.0)
 
@@ -218,7 +310,7 @@ def step2_farm_layouts(cfg: Config) -> bool:
             msg(f"§7[Setup] Skipped {crop}.")
             continue
         if action in ("create", "modify"):
-            msg(f"\n§b[Setup] Starting recording for §e{crop}§b. Stand at your farm's start position and press F8.")
+            msg(f"\n§b[Setup] Starting recording for §e{crop}§b.")
             points = _recording_session(crop)
             if not points:
                 msg(f"§c[Setup] Recording aborted for {crop}.")
@@ -245,10 +337,11 @@ def step3_summary(cfg: Config) -> bool:
     summary_text = (
         f"Hoe slot:          {cfg.get('hoe_slot', '?')}\n"
         f"Vacuum slot:       {cfg.get('vacuum_slot', '?')}\n"
+        f"Rod slot:          {cfg.get('fishing_rod_slot', '?')}\n"
+        f"Pest Base Plot:    {cfg.get('pest_plot_name', '?')}\n"
+        f"Pest Cooldown:     {cfg.get('pest_cooldown', '?')}s\n"
         f"Vacuum radius:     {cfg.get('vacuum_radius', '?')} blocks\n"
         f"Auto-kill on path: {cfg.get('auto_kill_on_path', '?')}\n"
-        f"Auto-verify tab:   {cfg.get('auto_verify_tab', '?')}\n"
-        f"Farm orientation:  {cfg.get('farm_orientation', '?')}\n"
         "─────────────────────────────────────────\n" + "\n".join(farm_lines)
     )
 
@@ -257,9 +350,10 @@ def step3_summary(cfg: Config) -> bool:
     scr.add_label(text=summary_text, width=530, height=win_h - 60, x=14, y=10, justify="left", anchor="nw", font=("Courier", 9))
 
     def on_save():
-        cfg.save()
+        # On utilise notre formateur personnalisé à la place de cfg.save()
+        save_compact_config(CONFIG_FILE, cfg)
         result["saved"] = True
-        msg(f"§a[Setup] Configuration saved to {CONFIG_FILE}. Ready to run FarmAuto!")
+        msg(f"§a[Setup] Configuration saved in COMPACT format to {CONFIG_FILE}. Ready to run FarmAuto!")
         scr.close()
 
     scr.add_button(on_click=on_save, text="Save & Finish", width=150, height=30, x=14,  y=win_h - 46)
@@ -293,7 +387,7 @@ def main():
     if not step3_summary(cfg):
         msg("§c[Setup] Save cancelled. No changes written.")
         return
-    msg("§a[Setup] Done! Run §e\\FarmAuto §ato start farming.")
+    msg("§a[Setup] Done! Run §e\\\\FarmAuto §ato start farming.")
 
 if __name__ == "__main__":
     main()

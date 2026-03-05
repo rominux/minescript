@@ -1,13 +1,7 @@
 """
-FarmAuto.py  –  Dynamic Farming Macro
+FarmAuto.py  –  Dynamic Farming Macro with PestFarming Mode
 ===============================================================
 Run from Minescript chat:  \\FarmAuto
-
-Keys
-  F7  – Stop current task / exit
-  F8  – Start farming the nearest configured crop
-  F9  – Print current pest status (when idle)
-  F10 – Launch Pest Hunter manually (always works regardless of auto_verify_tab)
 """
 
 import os
@@ -24,14 +18,16 @@ from config_lib import Config
 # ─────────────────────────────────────────────────────────────────────────────
 # Config loading
 # ─────────────────────────────────────────────────────────────────────────────
-# Fix du chemin absolu pour qu'il trouve le fichier peu importe d'où on lance
 CONFIG_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "farmauto_config.json")
 
 _cfg = Config(CONFIG_FILE)
 
 HOE_SLOT          = int(_cfg.get("hoe_slot",          3))
 VACUUM_SLOT       = int(_cfg.get("vacuum_slot",        2))
-VACUUM_RADIUS     = float(_cfg.get("vacuum_radius",    6.0))
+FISHING_ROD_SLOT  = int(_cfg.get("fishing_rod_slot",   4))
+PEST_COOLDOWN     = int(_cfg.get("pest_cooldown",      300))
+PEST_PLOT_NAME    = str(_cfg.get("pest_plot_name",     "3"))
+VACUUM_RADIUS     = float(_cfg.get("vacuum_radius",    14.0))
 AUTO_KILL_ON_PATH = bool(_cfg.get("auto_kill_on_path", True))
 AUTO_VERIFY_TAB   = bool(_cfg.get("auto_verify_tab",  True))
 FARMS_CFG: dict   = _cfg.get("farms", {})
@@ -115,7 +111,7 @@ WAYPOINT_RADIUS_SQ = 3.0 ** 2
 # ─────────────────────────────────────────────────────────────────────────────
 # Constants & Timing
 # ─────────────────────────────────────────────────────────────────────────────
-DETECTION_RADIUS    = 13.0
+DETECTION_RADIUS    = 16.0
 DETECTION_RADIUS_SQ = DETECTION_RADIUS ** 2
 
 PEST_NAMES = ["Field Mouse", "Fly", "Cricket", "Locust", "Rat", "Earthworm", "Mite", "Moth", "Slug", "Beetle", "Firefly", "Praying Mantis", "Dragonfly", "Mosquito"]
@@ -211,6 +207,54 @@ def run_pest_check() -> None:
         msg(text)
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Fishing Rod
+# ─────────────────────────────────────────────────────────────────────────────
+
+def use_fishing_rod() -> None:
+    msg("§b[Action] Casting Fishing Rod...")
+    minescript.player_inventory_select_slot(FISHING_ROD_SLOT)
+    time.sleep(0.2)
+    minescript.player_press_use(True)
+    time.sleep(0.1)
+    minescript.player_press_use(False)
+    time.sleep(0.5)
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Background Chat Listener for PestFarming
+# ───────────────────────────────────────────────────────²──────────────────────
+def tail_chat_for_pests(stop_event: threading.Event, pest_spawn_event: threading.Event, plot_info: list):
+    exec_dir = os.path.dirname(os.path.abspath(__file__))
+    mc_dir = os.path.dirname(os.path.dirname(os.path.dirname(exec_dir)))
+    log_path = os.path.join(mc_dir, "logs", "latest.log")
+    
+    if not os.path.exists(log_path):
+        msg(f"§c[ChatListener] Error: Cannot find log file at {log_path}. Pest detection failed.")
+        return
+        
+    with open(log_path, 'r', encoding='utf-8', errors='ignore') as f:
+        f.seek(0, os.SEEK_END)
+        while not stop_event.is_set():
+            line = f.readline()
+            if not line:
+                time.sleep(0.1)
+                continue
+            
+            clean_line = _STRIP_FORMAT.sub("", line).strip()
+            
+            if "Pest" in clean_line and "Plot -" in clean_line:
+                num_match = re.search(r"([0-9]+)[^a-zA-Z]*Pest", clean_line)
+                pest_count = num_match.group(1) if num_match else "1"
+                
+                plot_match = re.search(r"in Plot - ([a-zA-Z0-9_]+)", clean_line)
+                if plot_match:
+                    plot_name = plot_match.group(1).strip()
+                    plot_info.clear()
+                    plot_info.append(plot_name)
+                    plot_info.append(pest_count)
+                    msg(f"§a[ChatListener] {pest_count} PEST(S) DETECTED IN PLOT: {plot_name}!")
+                    pest_spawn_event.set()
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Safety helpers
 # ─────────────────────────────────────────────────────────────────────────────
 def release_all_keys() -> None:
@@ -252,7 +296,7 @@ def aim_at(target_pos) -> None:
 # ─────────────────────────────────────────────────────────────────────────────
 # In-path lightweight pest kill
 # ─────────────────────────────────────────────────────────────────────────────
-_VISION_HALF_ANGLE = 35.0
+_VISION_HALF_ANGLE = 180.0
 _VISION_RADIUS     = 10.0
 _last_pest_check: float = 0.0
 
@@ -325,13 +369,13 @@ def check_and_kill_pests(yaw_origin: float, pitch_origin: float, stop_event: thr
     return True
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Pest Hunter 3D
+# Pest Hunter 3D 
 # ─────────────────────────────────────────────────────────────────────────────
-def ascend_to_80(stop_event: threading.Event) -> None:
+def ascend_to_79(stop_event: threading.Event) -> None:
     try:
-        if minescript.player_position()[1] < 79:
+        if minescript.player_position()[1] < 78:
             minescript.player_press_jump(True)
-            while minescript.player_position()[1] < 79 and not stop_event.is_set(): time.sleep(0.03)
+            while minescript.player_position()[1] < 78 and not stop_event.is_set(): time.sleep(0.03)
             minescript.player_press_jump(False)
     except Exception: pass
 
@@ -375,7 +419,7 @@ def _rescan_tab_fresh() -> tuple:
     _invalidate_pest_cache()
     return get_pest_info()
 
-def action_hunt_pests(stop_event: threading.Event, known_total: str | None = None, known_plots: list | None = None) -> None:
+def action_hunt_pests(stop_event: threading.Event, known_total: str | None = None, known_plots: list | None = None, return_to_garden: bool = True) -> None:
     if known_total is not None and known_plots is not None:
         total_str, infested_plots = known_total, known_plots
     else:
@@ -410,11 +454,35 @@ def action_hunt_pests(stop_event: threading.Event, known_total: str | None = Non
             plots_to_visit.sort(key=dist_plot)
         except Exception: pass
         target_plot = plots_to_visit[0]
+        
         if target_plot not in PLOT_COORDS:
-            plots_to_visit.pop(0); continue
+            msg(f"§e[Pest Hunter] Custom plot '{target_plot}' detected. Scanning globally...")
+            ascend_to_79(stop_event)
+            _invalidate_entity_cache()
+            target = find_nearest_pest(radius=250.0)
+            
+            if not target:
+                for angle in [0, 90, 180, -90]:
+                    minescript.player_set_orientation(angle, 0.0)
+                    time.sleep(0.3)
+                    _invalidate_entity_cache()
+                    target = find_nearest_pest(radius=250.0)
+                    if target: break
+                    
+            if target:
+                msg("§a[Pest Hunter] Found pest for custom plot! Engaging...")
+                kills = _kill_target_chain(target, stop_event)
+                global_kills += kills
+                plots_to_visit.pop(0)
+                continue
+            else:
+                msg("§c[Pest Hunter] Could not locate pest for custom plot. Skipping.")
+                plots_to_visit.pop(0)
+                continue
+
         tx, ty, tz = PLOT_COORDS[target_plot]
         msg(f"§c[Pest Hunter] → Plot {target_plot} ({remaining_global()} pest(s) remaining)…")
-        ascend_to_80(stop_event)
+        ascend_to_79(stop_event)
         fly_to_2d(tx, tz, stop_event, sprint=True)
         if stop_event.is_set(): break
         plot_kills = 0
@@ -430,7 +498,7 @@ def action_hunt_pests(stop_event: threading.Event, known_total: str | None = Non
                 global_kills += kills_this_chain
                 if kills_this_chain > 0: msg(f"§a[Pest Hunter] {kills_this_chain} kill(s). Plot: {plot_kills}. Global rem: {remaining_global()}.")
                 if stop_event.is_set(): break
-                ascend_to_80(stop_event)
+                ascend_to_79(stop_event)
                 _invalidate_entity_cache()
                 target = find_nearest_pest(radius=90.0)
                 if target: continue
@@ -520,31 +588,68 @@ def action_hunt_pests(stop_event: threading.Event, known_total: str | None = Non
                 if target: unvisited_corners.pop(0); continue
                 unvisited_corners.pop(0)
 
-    if not stop_event.is_set():
+    if not stop_event.is_set() and return_to_garden:
         msg("§a[Pest Hunter] Mission accomplished.")
         warp_garden()
 
 # ─────────────────────────────────────────────────────────────────────────────
-# NEW UNIVERSAL DYNAMIC NAVIGATION ENGINE
+# NEW UNIVERSAL NAVIGATION ENGINE (WITH WALL-HUGGING STABILIZATION)
 # ─────────────────────────────────────────────────────────────────────────────
-def Maps_waypoints(yaw: float, pitch: float, waypoint_list: list, stop_event: threading.Event) -> None:
+def Maps_waypoints(yaw: float, pitch: float, waypoint_list: list, stop_event: threading.Event, infinite_loop: bool = False, pest_spawn_event: threading.Event = None, start_index: int = 1, next_rod_cast_time: float = 0.0) -> tuple[int, float]:
     """
-    Universally navigates connecting the dots from waypoint_list[1] to the end.
-    Calculates correct local movement keys using optimized relative angle differences.
+    Au lieu de se baser uniquement sur une distance approximative, cet algorithme
+    presse les touches jusqu'à ce que le joueur heurte le mur/la culture (stabilisation X/Z).
+    C'est la méthode de speedrun la plus fiable pour coller la hitbox des plantes.
     """
     minescript.player_inventory_select_slot(HOE_SLOT)
     minescript.player_press_attack(True)
+    
+    i = start_index
+
+    # --- CALCUL VECTORIEL DES TOUCHES (basé sur le Yaw) ---
+    rad = math.radians(yaw)
+    fx, fz = -math.sin(rad), math.cos(rad)              # Vecteur Avant (W)
+    rad_r = math.radians(yaw + 90)                      
+    rx, rz = -math.sin(rad_r), math.cos(rad_r)          # Vecteur Droite (D)
 
     try:
-        # Start at index 1 because index 0 is the starting point
-        for i in range(1, len(waypoint_list)):
-            if stop_event.is_set():
-                break
+        while not stop_event.is_set():
+            if i >= len(waypoint_list):
+                if infinite_loop:
+                    i = 1
+                else:
+                    break
             
             target_wp = waypoint_list[i]
             tx, ty, tz = target_wp["x"], target_wp["y"], target_wp["z"]
             
+            # Variables pour la détection de collision avec le mur
+            stuck_ticks = 0
+            try:
+                prev_p = minescript.player_position()
+                prev_px, prev_pz = prev_p[0], prev_p[2]
+            except:
+                prev_px, prev_pz = 0, 0
+                
             while not stop_event.is_set():
+                if pest_spawn_event and pest_spawn_event.is_set():
+                    return i, next_rod_cast_time
+                
+                # Vérification du timer de cooldown au beau milieu du champ
+                if next_rod_cast_time > 0 and time.monotonic() >= next_rod_cast_time:
+                    minescript.player_press_forward(False)
+                    minescript.player_press_backward(False)
+                    minescript.player_press_right(False)
+                    minescript.player_press_left(False)
+                    minescript.player_press_attack(False)
+                    
+                    use_fishing_rod()
+                    next_rod_cast_time = 0.0 # Désactive l'alerte pour ce cycle
+                    
+                    look(yaw, pitch)
+                    minescript.player_inventory_select_slot(HOE_SLOT)
+                    minescript.player_press_attack(True)
+
                 if check_and_kill_pests(yaw, pitch, stop_event):
                     look(yaw, pitch)
                     minescript.player_inventory_select_slot(HOE_SLOT)
@@ -560,54 +665,61 @@ def Maps_waypoints(yaw: float, pitch: float, waypoint_list: list, stop_event: th
                 dz = tz - pz
                 dist_2d = math.sqrt(dx**2 + dz**2)
                 
-                if dist_2d <= 0.3:
-                    break # Destination reached!
+                # --- L'IDÉE DE GÉNIE : VÉRIFICATION DE LA STABILISATION (COLLISION) ---
+                # Si la position du joueur ne change plus (il a tapé la bordure de la culture)
+                if abs(px - prev_px) < 0.005 and abs(pz - prev_pz) < 0.005:
+                    stuck_ticks += 1
+                else:
+                    stuck_ticks = 0
+                    
+                prev_px, prev_pz = px, pz
                 
-                # --- NOUVEAU CALCUL D'ANGLE RELATIF OPTIMISÉ ---
-                # 1. On trouve l'angle absolu de la cible
-                target_angle = math.degrees(math.atan2(-dx, dz))
+                # Le waypoint est validé SI :
+                # 1. On est très près de l'objectif (0.3 blocs)
+                # 2. OU ALORS on est relativement proche (< 2.0 blocs) MAIS on vient de heurter le mur (stabilisé pendant 3 ticks).
+                if dist_2d <= 0.6 or (dist_2d <= 2.0 and stuck_ticks >= 2):
+                    break 
                 
-                # 2. On calcule la différence avec là où regarde le joueur
-                diff = (target_angle - yaw + 180) % 360 - 180
+                # --- CALCUL INTELLIGENT DE LA TOUCHE ---
+                # On projette le vecteur destination sur les touches pour un résultat 100% universel
+                fwd_val = dx * fx + dz * fz
+                right_val = dx * rx + dz * rz
                 
-                # 3. Seuils asymétriques optimisés pour le farming :
-                # - Permet les diagonales Avant (W+D / W+A) pour attaquer 2 rangées.
-                # - Force un mouvement Arrière strict (S) sans dévier sur les côtés.
-                press_fwd = -85 < diff < 85
-                press_back = diff > 95 or diff < -95
-                press_right = 20 < diff < 145
-                press_left = -145 < diff < -20
-                
-                minescript.player_press_forward(press_fwd)
-                minescript.player_press_backward(press_back)
-                minescript.player_press_right(press_right)
-                minescript.player_press_left(press_left)
+                # Dès qu'il y a un infime décalage (0.1), le bot appuie sur la touche 
+                # pour te forcer contre le mur sans hésiter.
+                minescript.player_press_forward(fwd_val > 0.1)
+                minescript.player_press_backward(fwd_val < -0.1)
+                minescript.player_press_right(right_val > 0.1)
+                minescript.player_press_left(right_val < -0.1)
                 
                 time.sleep(LOOP_SLEEP)
             
-            # Stop keys upon reaching the waypoint
+            # Relâchement propre avant de calculer le prochain virage
+            time.sleep(0.2)
             minescript.player_press_forward(False)
             minescript.player_press_backward(False)
             minescript.player_press_right(False)
             minescript.player_press_left(False)
             
-            if stop_event.is_set():
-                break
+            if stop_event.is_set() or (pest_spawn_event and pest_spawn_event.is_set()):
+                return i, next_rod_cast_time
 
-            # Check if there was a Y-level drop for delays
-            prev_wp = waypoint_list[i-1]
+            prev_wp = waypoint_list[i-1] if i > 0 else waypoint_list[0]
             if target_wp["y"] < prev_wp["y"] - 0.5:
                 time.sleep(DROP_DOWN_DELAY)
+
+            i += 1
 
     finally:
         minescript.player_press_attack(False)
         release_all_keys()
-        if not stop_event.is_set():
+        if not stop_event.is_set() and not infinite_loop and not (pest_spawn_event and pest_spawn_event.is_set()):
             warp_garden()
             
+    return i, next_rod_cast_time
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Generic farm loop
+# Generic farm loop & PestFarming Supervisor
 # ─────────────────────────────────────────────────────────────────────────────
 def farm_generic(crop_name: str, stop_event: threading.Event) -> None:
     if crop_name not in WAYPOINTS:
@@ -624,24 +736,75 @@ def farm_generic(crop_name: str, stop_event: threading.Event) -> None:
         minescript.execute("/sethome")
         msg(f"§aStarting farm: §e{crop_name}")
 
-        while not stop_event.is_set():
-            if AUTO_VERIFY_TAB:
-                _invalidate_pest_cache()
-                total, plots = get_pest_info()
-                if total != "0" and plots:
-                    msg(f"§c[Auto-Hunt] {total} pest(s) detected! Launching cleaner…")
-                    action_hunt_pests(stop_event, known_total=total, known_plots=plots)
-                    if stop_event.is_set():
-                        break
+        # --- PEST FARMING SPECIAL MODE ---
+        if crop_name == "PestFarming":
+            pest_spawn_event = threading.Event()
+            plot_info = []
+            
+            chat_thread = threading.Thread(target=tail_chat_for_pests, args=(stop_event, pest_spawn_event, plot_info), daemon=True)
+            chat_thread.start()
+
+            current_wp_index = 1
+            next_rod_cast_time = time.monotonic()
+
+            while not stop_event.is_set():
+                
+                # 1. Avance sur le chemin en utilisant la mémoire, et check le cooldown en mouvement
+                current_wp_index, next_rod_cast_time = Maps_waypoints(yaw, pitch, _waypoint_list, stop_event, infinite_loop=True, pest_spawn_event=pest_spawn_event, start_index=current_wp_index, next_rod_cast_time=next_rod_cast_time)
+                
+                # 2. Exécution si une pest est apparue
+                if pest_spawn_event.is_set() and len(plot_info) >= 2:
+                    
+                    next_rod_cast_time = time.monotonic() + PEST_COOLDOWN
+                    
+                    target_plot = plot_info[0]
+                    target_amount = plot_info[1]
+                    pest_spawn_event.clear()
+                    
+                    msg("§a[PestFarming] EXECUTING PEST KILL SEQUENCE...")
+                    
                     look(yaw, pitch)
-                    minescript.player_inventory_select_slot(HOE_SLOT)
+                    minescript.execute("/sethome")
                     time.sleep(0.5)
+                    
+                    use_fishing_rod()
+                        
+                    if target_plot == PEST_PLOT_NAME:
+                        msg(f"§e[PestFarming] Pests spawned in base plot {target_plot}. Teleporting...")
+                        minescript.execute(f"/plotteleport {PEST_PLOT_NAME}")
+                        time.sleep(1.5)
+                        action_hunt_pests(stop_event, known_total=target_amount, known_plots=[target_plot], return_to_garden=False)
+                    else:
+                        msg(f"§e[PestFarming] Pests spawned in plot {target_plot}. Flying there...")
+                        action_hunt_pests(stop_event, return_to_garden=False)
+                    
+                    warp_garden()
+                    look(yaw, pitch)
+                    
+        # --- NORMAL FARMING MODE ---
+        else:
+            current_wp_index = 1
+            while not stop_event.is_set():
+                if AUTO_VERIFY_TAB:
+                    _invalidate_pest_cache()
+                    total, plots = get_pest_info()
+                    if total != "0" and plots:
+                        msg(f"§c[Auto-Hunt] {total} pest(s) detected! Launching cleaner…")
+                        action_hunt_pests(stop_event, known_total=total, known_plots=plots, return_to_garden=True)
+                        if stop_event.is_set():
+                            break
+                        look(yaw, pitch)
+                        minescript.player_inventory_select_slot(HOE_SLOT)
+                        time.sleep(0.5)
+                        
+                        current_wp_index = 1
 
-            if stop_event.is_set():
-                break
+                if stop_event.is_set():
+                    break
 
-            # Appel unique au moteur universel au lieu des actions codées en dur
-            Maps_waypoints(yaw, pitch, _waypoint_list, stop_event)
+                current_wp_index, _ = Maps_waypoints(yaw, pitch, _waypoint_list, stop_event, start_index=current_wp_index)
+                if current_wp_index >= len(_waypoint_list):
+                    break
 
     finally:
         release_all_keys()
